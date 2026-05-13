@@ -168,37 +168,35 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
     Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr'] })
   })
 
-  console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage — ${MAX_PAGES} pages, ${CONCURRENCY} onglets parallèles`)
+  console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage séquentiel — ${MAX_PAGES} pages max`)
   const start = Date.now()
 
   const allListings: LBCListing[] = []
   const seen = new Set<string>()
 
   try {
-    for (let batch = 0; batch < MAX_PAGES; batch += CONCURRENCY) {
-      const pages = Array.from(
-        { length: Math.min(CONCURRENCY, MAX_PAGES - batch) },
-        (_, i) => batch + i + 1
-      )
+    for (let p = 1; p <= MAX_PAGES; p++) {
+      const pageListings = await scrapePageInTab(context, buildPageUrl(searchUrl, p), p)
 
-      const results = await Promise.all(
-        pages.map(p => scrapePageInTab(context, buildPageUrl(searchUrl, p), p))
-      )
-
-      let batchTotal = 0
-      for (const pageListings of results) {
-        for (const l of pageListings) {
-          if (!seen.has(l.id)) {
-            seen.add(l.id)
-            allListings.push(l)
-            batchTotal++
-          }
+      let newItems = 0
+      for (const l of pageListings) {
+        if (!seen.has(l.id)) {
+          seen.add(l.id)
+          allListings.push(l)
+          newItems++
         }
       }
 
-      if (batchTotal === 0) {
-        console.log(`\x1b[33m[Scraper]\x1b[0m Batch vide, arrêt anticipé.`)
+      // Si la page ne retourne aucune annonce valide, c'est la fin de la liste ou un blocage
+      if (pageListings.length === 0) {
+        console.log(`\x1b[33m[Scraper]\x1b[0m Page vide, arrêt anticipé.`)
         break
+      }
+
+      // Petite pause humaine entre chaque page (sauf la dernière)
+      if (p < MAX_PAGES) {
+        const delay = Math.floor(Math.random() * 2000 + 2000) // 2 à 4 sec
+        await new Promise(r => setTimeout(r, delay))
       }
     }
   } finally {
