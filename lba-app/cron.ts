@@ -29,6 +29,13 @@ async function runCron() {
       console.log(`\n[${i+1}/${activeSearches.length}] Lancement du scan pour : ${search.name}`)
       try {
         await runScrapeJob(search.id)
+
+        // Anti-bot: Pause aléatoire entre 10 et 20 secondes sauf pour la dernière recherche
+        if (i < activeSearches.length - 1) {
+          const delay = Math.floor(Math.random() * (20000 - 10000 + 1) + 10000)
+          console.log(`\x1b[90m[Anti-Bot] Pause de ${Math.round(delay/1000)}s avant la prochaine recherche...\x1b[0m`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
       } catch (err) {
         console.error(`Erreur lors du scan de ${search.name}:`, err)
       }
