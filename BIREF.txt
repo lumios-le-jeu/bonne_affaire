@@ -1,0 +1,50 @@
+je veux faire un outil , une application web comme keepa  mais pour LEboncoin : 
+
+
+
+prenons l'exemple d'un produit : le Apple Mac mini M4
+
+
+
+sur l'interface d'acceuil il y aurait 2 elements : 
+
+1- tracker un nouveau produit 
+
+2- liste des elements en cours de tracking
+
+
+
+pour element 1 = 
+
+1.1 - commences par me demander le lien de la recherche qui m'interesse , avec les filtres etc : exemple ici https://www.leboncoin.fr/recherche?text=Apple%20Mac%20mini%20M4 
+
+
+
+mais j'aurai pu mettre un lien avec un filtre sur la region Nord : 
+
+https://www.leboncoin.fr/recherche?text=Apple%20Mac%20mini%20M4&locations=r_17
+
+
+
+
+
+1.2- affiche ensuite tous les prix  affiché en cours de cette recherche donnée en 1.1 sur un graphique, en ajoutant les filtres par elements , sur toutes les pages du resultat de la recherche (filtre par exemple sur la localisation ou le prix ou la livraison ou l'etat etc... en fct des produits) 
+
+
+
+1.3 a coté de ce graph ajoute une case acocher : une option "tracker le prix" --> ca enregistre alors tous les jours les prix de tous les articles de cette recherche (ici Apple Mac mini M4 pour l'exemple) encore en vente chaque jours et les conserve afin de voir une corube d'evolution des prix. et pouvoir comparer les produit encore a la vente. pour voir si une bonne affaire ou non . donc un outil de tracking avec des statistique "bonne affaires". je veux aussi des statistique et des courbe sur le prix affiché du produit vs le nombre de jours que le produit a mis a etre vendu. 
+
+et tous les jours c'est mis en automatique a jour 
+
+
+
+pour element 2 = 
+
+ca affiche la liste des elements tracké en 1. 
+
+si on clic sur un element de la liste : ca affiche toutes les annonces en cours de vents ainsi que toutes les statistiques et courbes et bonne affaire et prix de vente vs nbre de jours ... etc. 
+
+
+
+
+

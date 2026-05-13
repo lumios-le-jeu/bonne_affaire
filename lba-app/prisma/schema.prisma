@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Search {
+  id          String    @id @default(cuid())
+  name        String
+  url         String    @unique
+  isTracking  Boolean   @default(false)
+  lastScraped DateTime?
+  createdAt   DateTime  @default(now())
+  listings    Listing[]
+  snapshots   DailySnapshot[]
+}
+
+model Listing {
+  id        String   @id
+  title     String
+  price     Int
+  location  String?
+  thumb     String?
+  url       String?
+  status    String   @default("active")
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+  soldAt    DateTime?
+  daysToSell Int?
+  searchId  String
+  missingCount Int @default(0)
+  search    Search   @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  history   PriceHistory[]
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  listingId String
+  price     Int
+  date      DateTime @default(now())
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+model DailySnapshot {
+  id         String   @id @default(cuid())
+  searchId   String
+  date       DateTime @default(now())
+  avgPrice   Int
+  minPrice   Int
+  maxPrice   Int
+  count      Int
+  search     Search   @relation(fields: [searchId], references: [id], onDelete: Cascade)
+}
