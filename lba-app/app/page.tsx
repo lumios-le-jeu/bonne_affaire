@@ -94,7 +94,7 @@ export default function Home() {
     }
   }
 
-  const isScanning = scanningIds.length > 0
+  const isScanning = scanningIds.length > 0 && !scanningIds.every(id => scanStatus[id]?.done)
   const doneScanCount = Object.values(scanStatus).filter(s => s.done).length
 
   return (
@@ -115,7 +115,7 @@ export default function Home() {
           {isScanning ? (
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#4ade80', animation: 'pulse 1s infinite' }} />
-              Scan en cours... {doneScanCount}/{scanningIds.length + doneScanCount}
+              Scan en cours... {doneScanCount}/{scanningIds.length}
             </span>
           ) : '🔄 Rafraîchir les stats'}
         </button>
@@ -158,7 +158,7 @@ export default function Home() {
         </div>
       ))}
       
-      <TrackedList refreshKey={refreshKey} />
+      <TrackedList refreshKey={refreshKey} scanningIds={scanningIds} scanStatus={scanStatus} />
       <BestSellers refreshKey={refreshKey} />
       
       <div style={{ marginTop: '4rem', padding: '1rem', borderTop: '1px solid var(--card-border)', color: '#64748b', fontSize: '0.8rem', textAlign: 'center' }}>

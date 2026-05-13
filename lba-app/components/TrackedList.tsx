@@ -13,7 +13,15 @@ export interface SearchData {
   minPrice: number
 }
 
-export default function TrackedList({ refreshKey }: { refreshKey: number }) {
+export default function TrackedList({ 
+  refreshKey,
+  scanningIds = [],
+  scanStatus = {}
+}: { 
+  refreshKey: number
+  scanningIds?: string[]
+  scanStatus?: Record<string, { done: boolean }>
+}) {
   const [searches, setSearches] = useState<SearchData[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -53,11 +61,19 @@ export default function TrackedList({ refreshKey }: { refreshKey: number }) {
 
   return (
     <div className="grid-cards" style={{ marginBottom: '3rem' }}>
-      {searches.map(s => (
+      {searches.map(s => {
+        const isCurrentlyScanning = scanningIds.includes(s.id) && !scanStatus[s.id]?.done
+        const isJustDone = scanningIds.includes(s.id) && scanStatus[s.id]?.done
+
+        return (
         <a href={`/search/${s.id}`} key={s.id} style={{ textDecoration: 'none' }}>
           <div className="glass-panel card-hover" style={{ padding: '1.5rem', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, flex: 1, paddingRight: '2rem' }}>{s.name}</h3>
+              <h3 style={{ margin: 0, flex: 1, paddingRight: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {s.name}
+                {isCurrentlyScanning && <span title="Scan en cours" style={{ animation: 'pulse 1s infinite' }}>⏳</span>}
+                {isJustDone && <span title="Scan terminé">✅</span>}
+              </h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <div onClick={(e) => handleToggle(e, s.id, s.isTracking)}>
                   {s.isTracking ? (
@@ -96,7 +112,8 @@ export default function TrackedList({ refreshKey }: { refreshKey: number }) {
             </div>
           </div>
         </a>
-      ))}
+        )
+      })}
       {searches.length === 0 && (
         <div style={{ gridColumn: '1 / -1', padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
           Aucun produit tracké pour le moment.

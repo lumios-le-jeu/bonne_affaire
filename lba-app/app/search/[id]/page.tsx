@@ -58,7 +58,7 @@ export default function SearchDetail({ params }: { params: Promise<{ id: string 
   }
 
   const updateListingStatus = async (listingId: string, newStatus: string) => {
-    if (newStatus === 'excluded' && !confirm('Exclure cette annonce des résultats et des statistiques ?')) return
+    // if (newStatus === 'excluded' && !confirm('Exclure cette annonce des résultats et des statistiques ?')) return
     
     try {
       const res = await fetch(`/api/listings/${listingId}`, {
