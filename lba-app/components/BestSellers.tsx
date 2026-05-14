@@ -24,8 +24,9 @@ export default function BestSellers({ refreshKey }: { refreshKey: number }) {
       .then(r => r.json())
       .then(data => {
         setBestSellers(data)
-        setLoading(false)
       })
+      .catch(err => console.error('Fetch error:', err))
+      .finally(() => setLoading(false))
   }, [refreshKey])
 
   if (loading) return <div>Analyse des ventes...</div>

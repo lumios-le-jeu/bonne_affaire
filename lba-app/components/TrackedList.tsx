@@ -24,14 +24,22 @@ export default function TrackedList({
 }) {
   const [searches, setSearches] = useState<SearchData[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/searches')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`)
+        return r.json()
+      })
       .then(data => {
         setSearches(data)
-        setLoading(false)
       })
+      .catch(err => {
+        console.error('Fetch error:', err)
+        setError(err.message)
+      })
+      .finally(() => setLoading(false))
   }, [refreshKey])
 
   const handleToggle = async (e: React.MouseEvent, id: string, currentStatus: boolean) => {
@@ -58,6 +66,7 @@ export default function TrackedList({
   }
 
   if (loading) return <div>Chargement de vos cibles...</div>
+  if (error) return <div className="badge badge-danger">Erreur: {error}</div>
 
   return (
     <div className="grid-cards" style={{ marginBottom: '3rem' }}>
