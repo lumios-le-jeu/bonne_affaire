@@ -38,7 +38,7 @@ async function runDailyScan() {
 }
 
 // Démarrer le cron uniquement côté serveur (pas dans les workers Edge)
-if (typeof globalThis.__autoCronStarted === 'undefined') {
+if (typeof (globalThis as any).__autoCronStarted === 'undefined') {
   (globalThis as any).__autoCronStarted = true
   const initialDelay = getMsUntil5AM()
   console.log(`\x1b[35m[AutoCron]\x1b[0m ✅ Cron interne initialisé — premier scan dans ${Math.round(initialDelay / 1000 / 60)} min`)
