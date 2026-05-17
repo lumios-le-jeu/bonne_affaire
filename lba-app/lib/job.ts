@@ -26,10 +26,16 @@ export async function runScrapeJob(searchId: string) {
     const listing = existingMap.get(missingId)
     if (!listing) continue
     const newMissingCount = (listing.missingCount || 0) + 1
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-    const isLongGone = new Date(listing.lastSeen).getTime() < sevenDaysAgo.getTime()
 
-    if (newMissingCount >= 15 || isLongGone) {
+    // ⚠️ Le scraper est limité à MAX_PAGES pages : une annonce en page 9+
+    // n'apparaît jamais dans les résultats sans être vendue pour autant.
+    // On exige donc :
+    //  - 30 scans consécutifs manqués (au lieu de 15) — soit ~30 jours si scan quotidien
+    //  - ET que la dernière vue soit > 14 jours (pas juste pagede débordement)
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)
+    const isLongGone = new Date(listing.lastSeen).getTime() < fourteenDaysAgo.getTime()
+
+    if (newMissingCount >= 30 && isLongGone) {
       const daysToSell = Math.round((now.getTime() - new Date(listing.firstSeen).getTime()) / (1000 * 60 * 60 * 24))
       await prisma.listing.update({ where: { id: missingId }, data: { status: 'sold', soldAt: now, daysToSell, lastSeen: now, missingCount: newMissingCount } })
     } else {

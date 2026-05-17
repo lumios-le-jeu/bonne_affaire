@@ -1,11 +1,49 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { scrapeLeboncoin } from '@/lib/scraper'
 import { runScrapeJob } from '@/lib/job'
 
 // ─── File d'attente globale (un seul browser Chrome à la fois) ───────────────
 const queue: string[] = []
 let isProcessing = false
+
+// ─── Cron interne : scan auto quotidien à 5h00 du matin ──────────────────────
+// Pas besoin de cron OS — tourne directement dans le process Next.js
+function getMsUntil5AM(): number {
+  const now = new Date()
+  const next5AM = new Date(now)
+  next5AM.setHours(5, 0, 0, 0)
+  if (next5AM <= now) next5AM.setDate(next5AM.getDate() + 1) // demain si 5h déjà passé
+  return next5AM.getTime() - now.getTime()
+}
+
+async function runDailyScan() {
+  console.log('\x1b[35m[AutoCron]\x1b[0m ⏰ Scan automatique quotidien déclenché (5h00)')
+  try {
+    const searches = await prisma.search.findMany({ where: { isTracking: true } })
+    console.log(`\x1b[35m[AutoCron]\x1b[0m ${searches.length} recherche(s) active(s) à scanner`)
+    for (const s of searches) {
+      if (!queue.includes(s.id)) {
+        queue.push(s.id)
+        console.log(`\x1b[35m[AutoCron]\x1b[0m → "${s.name}" ajouté à la file`)
+      }
+    }
+    processQueue().catch(err => console.error('[AutoCron Queue Error]', err))
+  } catch (err) {
+    console.error('\x1b[31m[AutoCron]\x1b[0m Erreur lors du scan auto:', err)
+  }
+  // Reprogram pour le lendemain à 5h exactement
+  const delay = getMsUntil5AM()
+  console.log(`\x1b[35m[AutoCron]\x1b[0m Prochain scan dans ${Math.round(delay / 1000 / 60)} minutes`)
+  setTimeout(runDailyScan, delay)
+}
+
+// Démarrer le cron uniquement côté serveur (pas dans les workers Edge)
+if (typeof globalThis.__autoCronStarted === 'undefined') {
+  (globalThis as any).__autoCronStarted = true
+  const initialDelay = getMsUntil5AM()
+  console.log(`\x1b[35m[AutoCron]\x1b[0m ✅ Cron interne initialisé — premier scan dans ${Math.round(initialDelay / 1000 / 60)} min`)
+  setTimeout(runDailyScan, initialDelay)
+}
 
 async function processQueue() {
   if (isProcessing) return
