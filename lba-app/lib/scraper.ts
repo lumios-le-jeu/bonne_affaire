@@ -1,8 +1,9 @@
 /**
- * scraper.ts — Playwright scraper (parallel tabs, no playwright-extra)
- * Utilise directement 'playwright' sans le wrapper playwright-extra
- * pour éviter les conflits dans le contexte Next.js.
- * 4 onglets en parallèle + extraction via __NEXT_DATA__ SSR.
+ * scraper.ts — Playwright scraper avec double mode :
+ * 1. SSR __NEXT_DATA__ pour les catégories classiques
+ * 2. Interception réseau pour l'immobilier (catégories SPA)
+ *
+ * Ne bloque PLUS les ressources JS/CSS pour ne pas casser DataDome.
  */
 
 import { chromium, BrowserContext } from 'playwright'
@@ -17,7 +18,7 @@ export interface LBCListing {
 }
 
 // ─────────────────────────────────────────────
-// Extraction depuis le JSON __NEXT_DATA__ (SSR)
+// Extraction depuis le JSON annonces (SSR ou API)
 // ─────────────────────────────────────────────
 function extractFromAds(ads: any[]): LBCListing[] {
   const listings: LBCListing[] = []
@@ -26,7 +27,7 @@ function extractFromAds(ads: any[]): LBCListing[] {
     if (!id) continue
 
     const price = Array.isArray(ad.price) ? ad.price[0] : (ad.price ?? 0)
-    if (!price || price <= 0 || price > 50000000) continue // 50M€ max pour ne pas filtrer l'immobilier
+    if (!price || price <= 0 || price > 50000000) continue // 50M€ max
 
     const images = ad.images ?? {}
     const thumb =
@@ -62,23 +63,59 @@ function buildPageUrl(searchUrl: string, page: number): string {
 
 // ─────────────────────────────────────────────
 // Scrape une page dans un onglet existant
+// Stratégie 1 : intercepter la réponse API réseau (immobilier SPA)
+// Stratégie 2 : lire __NEXT_DATA__ SSR (catégories classiques)
+// Stratégie 3 : fallback DOM
 // ─────────────────────────────────────────────
 async function scrapePageInTab(context: BrowserContext, url: string, pageNum: number): Promise<LBCListing[]> {
   const tab = await context.newPage()
 
-  // Bloquer images/fonts/CSS/media — inutiles pour extraire __NEXT_DATA__
+  // ⚠️ On ne bloque PLUS les ressources — DataDome a besoin des scripts JS pour valider
+  // (bloquer CSS/fonts/images uniquement, pas JS ni XHR/fetch)
   await tab.route('**/*', (route) => {
     const t = route.request().resourceType()
     if (['image', 'media', 'font', 'stylesheet'].includes(t)) route.abort()
     else route.continue()
   })
 
-  try {
-    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 })
-    // Laisser le JS s'initialiser (DataDome challenge + hydration Next.js)
-    await tab.waitForTimeout(1500)
+  // Capturer les réponses API avec des annonces (mode immobilier SPA)
+  const interceptedAds: any[] = []
+  tab.on('response', async (response) => {
+    if (interceptedAds.length > 0) return // déjà trouvé
+    const resUrl = response.url()
+    const ct = response.headers()['content-type'] || ''
+    if (!ct.includes('json')) return
+    // LBC API endpoints connus pour les annonces
+    if (
+      resUrl.includes('api.leboncoin.fr') ||
+      resUrl.includes('/classified') ||
+      resUrl.includes('/ad-search') ||
+      resUrl.includes('/classifieds')
+    ) {
+      try {
+        const json = await response.json()
+        const ads = json?.ads ?? json?.data?.ads ?? null
+        if (Array.isArray(ads) && ads.length > 0) {
+          interceptedAds.push(...ads)
+          console.log(`\x1b[36m[Scraper]\x1b[0m Page ${pageNum}: API interceptée — ${ads.length} annonces brutes`)
+        }
+      } catch { /* ignore */ }
+    }
+  })
 
-    // Extraire __NEXT_DATA__ directement depuis le HTML SSR
+  try {
+    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    // Attendre que DataDome valide + que les appels API soient lancés
+    await tab.waitForTimeout(4000)
+
+    // ── Stratégie 1 : API interceptée pendant le chargement ─────────────────
+    if (interceptedAds.length > 0) {
+      const parsed = extractFromAds(interceptedAds)
+      console.log(`\x1b[32m[Scraper]\x1b[0m Page ${pageNum}: ${parsed.length} annonces (API réseau)`)
+      return parsed
+    }
+
+    // ── Stratégie 2 : __NEXT_DATA__ SSR ─────────────────────────────────────
     const ads = await tab.evaluate(() => {
       const script = document.getElementById('__NEXT_DATA__')
       if (!script?.textContent) return null
@@ -99,7 +136,7 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
       return parsed
     }
 
-    // Fallback DOM si __NEXT_DATA__ vide
+    // ── Stratégie 3 : Fallback DOM ───────────────────────────────────────────
     const fallback = await tab.evaluate(() => {
       const results: any[] = []
       const seen = new Set<string>()
@@ -114,7 +151,7 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
         if (!card) return
         const found = card.textContent?.match(/(\d[\d\s\u00A0]*)[\s\u00A0]*€/)
         const price = found ? parseInt(found[1].replace(/\s|\u00A0/g, '')) : 0
-        if (!price || price <= 0 || price > 50000000) return // 50M€ max pour ne pas filtrer l'immobilier
+        if (!price || price <= 0 || price > 50000000) return
         const title = (card as HTMLElement).getAttribute('aria-label') || 'Annonce LBC'
         results.push({ id: adId, title, price, location: 'France', thumb: null, url: anchor.href })
       })
@@ -133,14 +170,13 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
 }
 
 // ─────────────────────────────────────────────
-// Point d'entrée — 1 browser, onglets parallèles
+// Point d'entrée — 1 browser, pages séquentielles
 // ─────────────────────────────────────────────
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
-  const CONCURRENCY = 4
 
   const browser = await chromium.launch({
-    headless: false, // DataDome bloque headless:true — on doit garder le browser visible
+    headless: false, // DataDome bloque headless:true
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -151,17 +187,16 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
   })
 
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
-    viewport: { width: 1920, height: 1080 },
-    // Cacher les signes d'automatisation
+    viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: {
       'accept-language': 'fr-FR,fr;q=0.9',
     },
   })
 
-  // Injecter un script pour masquer webdriver
+  // Masquer webdriver
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
     Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] })
@@ -178,22 +213,18 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
     for (let p = 1; p <= MAX_PAGES; p++) {
       const pageListings = await scrapePageInTab(context, buildPageUrl(searchUrl, p), p)
 
-      let newItems = 0
       for (const l of pageListings) {
         if (!seen.has(l.id)) {
           seen.add(l.id)
           allListings.push(l)
-          newItems++
         }
       }
 
-      // Si la page ne retourne aucune annonce valide, c'est la fin de la liste ou un blocage
       if (pageListings.length === 0) {
         console.log(`\x1b[33m[Scraper]\x1b[0m Page vide, arrêt anticipé.`)
         break
       }
 
-      // Petite pause humaine entre chaque page (sauf la dernière)
       if (p < MAX_PAGES) {
         const delay = Math.floor(Math.random() * 2000 + 2000) // 2 à 4 sec
         await new Promise(r => setTimeout(r, delay))
