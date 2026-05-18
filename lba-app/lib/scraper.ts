@@ -26,7 +26,7 @@ function extractFromAds(ads: any[]): LBCListing[] {
     if (!id) continue
 
     const price = Array.isArray(ad.price) ? ad.price[0] : (ad.price ?? 0)
-    if (!price || price <= 0 || price > 200000) continue
+    if (!price || price <= 0 || price > 50000000) continue // 50M€ max pour ne pas filtrer l'immobilier
 
     const images = ad.images ?? {}
     const thumb =
@@ -114,7 +114,7 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
         if (!card) return
         const found = card.textContent?.match(/(\d[\d\s\u00A0]*)[\s\u00A0]*€/)
         const price = found ? parseInt(found[1].replace(/\s|\u00A0/g, '')) : 0
-        if (!price || price <= 0 || price > 200000) return
+        if (!price || price <= 0 || price > 50000000) return // 50M€ max pour ne pas filtrer l'immobilier
         const title = (card as HTMLElement).getAttribute('aria-label') || 'Annonce LBC'
         results.push({ id: adId, title, price, location: 'France', thumb: null, url: anchor.href })
       })
