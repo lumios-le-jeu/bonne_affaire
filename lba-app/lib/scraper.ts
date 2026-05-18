@@ -93,20 +93,33 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
       resUrl.includes('/classifieds')
     ) {
       try {
-        const json = await response.json()
-        const ads = json?.ads ?? json?.data?.ads ?? null
+        // Timeout sur la lecture du body pour éviter un blocage si la réponse est lente
+        const jsonTimeout = new Promise<never>((_, r) => setTimeout(() => r(new Error('json timeout')), 3000))
+        const json = await Promise.race([response.json(), jsonTimeout])
+        const ads = (json as any)?.ads ?? (json as any)?.data?.ads ?? null
         if (Array.isArray(ads) && ads.length > 0) {
           interceptedAds.push(...ads)
           console.log(`\x1b[36m[Scraper]\x1b[0m Page ${pageNum}: API interceptée — ${ads.length} annonces brutes`)
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore — réponse lente ou corps non-JSON */ }
     }
   })
 
   try {
-    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 })
     // Attendre que DataDome valide + que les appels API soient lancés
-    await tab.waitForTimeout(4000)
+    await tab.waitForTimeout(3000)
+
+    // Détection rapide : si la page est vide (blocage DataDome total), on abandonne
+    const isEmpty = await tab.evaluate(() => {
+      const body = document.body?.innerText?.trim() ?? ''
+      const hasScript = !!document.getElementById('__NEXT_DATA__')
+      return body.length < 50 && !hasScript
+    })
+    if (isEmpty) {
+      console.warn(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: page vide (blocage DataDome?) — abandon`)
+      return []
+    }
 
     // ── Stratégie 1 : API interceptée pendant le chargement ─────────────────
     if (interceptedAds.length > 0) {

@@ -7,10 +7,29 @@ export async function runScrapeJob(searchId: string) {
 
   console.log(`\x1b[34m[Scrape]\x1b[0m Starting: "${search.name}"`)
 
-  const scrapedListings = await scrapeLeboncoin(search.url)
+  // Timeout global : si le scrape dure +10 min, on abandonne proprement
+  const SCRAPE_TIMEOUT_MS = 10 * 60 * 1000
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('SCRAPE_TIMEOUT')), SCRAPE_TIMEOUT_MS)
+  )
+
+  let scrapedListings
+  try {
+    scrapedListings = await Promise.race([scrapeLeboncoin(search.url), timeoutPromise])
+  } catch (err: any) {
+    if (err.message === 'SCRAPE_TIMEOUT') {
+      console.error(`\x1b[31m[Scrape]\x1b[0m ⏱ Timeout (10 min) pour "${search.name}" — abandon du scan`)
+    } else {
+      console.error(`\x1b[31m[Scrape]\x1b[0m Erreur scrape "${search.name}":`, err.message)
+    }
+    // Mettre quand même à jour lastScraped pour débloquer le polling UI
+    await prisma.search.update({ where: { id: search.id }, data: { lastScraped: new Date() } })
+    return
+  }
 
   if (scrapedListings.length === 0) {
     console.warn(`\x1b[33m[Scrape]\x1b[0m No listings for "${search.name}"`)
+    await prisma.search.update({ where: { id: search.id }, data: { lastScraped: new Date() } })
     return
   }
 
