@@ -208,6 +208,7 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
 
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false, // Nécessaire pour résoudre le captcha manuellement
+    channel: 'chrome', // Utiliser le VRAI Google Chrome (pas Chrome for Testing)
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
