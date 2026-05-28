@@ -165,21 +165,9 @@ async function scrapePageInTab(browser: any, url: string, pageNum: number): Prom
 
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
-  const userDataDir = path.join(process.cwd(), 'puppeteer_profile')
-
-  const browser = await puppeteer.launch({
-    headless: false,
-    channel: 'chrome', // Utiliser le vrai Chrome
-    userDataDir,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--no-first-run',
-      '--window-size=1280,800',
-      '--password-store=basic',
-      '--use-mock-keychain',
-    ]
+  const browser = await puppeteer.connect({
+    browserURL: 'http://127.0.0.1:9222',
+    defaultViewport: null
   })
 
   console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage séquentiel — ${MAX_PAGES} pages max`)
@@ -210,7 +198,7 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       }
     }
   } finally {
-    await browser.close()
+    await browser.disconnect()
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
