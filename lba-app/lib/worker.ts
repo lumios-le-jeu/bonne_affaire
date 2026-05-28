@@ -166,7 +166,7 @@ async function scrapePageInTab(browser: any, url: string, pageNum: number): Prom
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
   const browser = await puppeteer.connect({
-    browserURL: 'http://127.0.0.1:9222',
+    browserURL: 'http://127.0.0.1:47812',
     defaultViewport: null
   })
 
