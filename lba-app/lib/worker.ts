@@ -217,6 +217,8 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       '--window-size=1280,800',
       '--password-store=basic', // Empêche Mac de demander le mot de passe Trousseau
       '--use-mock-keychain',    // Idem
+      '--remote-debugging-port=9222',       // Permet le contrôle à distance depuis le PC Windows !
+      '--remote-debugging-address=0.0.0.0', // Accessible sur le réseau local
     ],
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
