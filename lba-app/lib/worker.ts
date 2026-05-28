@@ -9,6 +9,7 @@
 import { chromium } from 'playwright-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import type { BrowserContext } from 'playwright'
+import path from 'path'
 
 chromium.use(StealthPlugin())
 
@@ -114,17 +115,26 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
     // Attendre que DataDome valide + que les appels API soient lancés
     await tab.waitForTimeout(3000)
 
-    // Détection rapide : si la page est vide (blocage DataDome total), on abandonne
+    // Détection rapide : si la page est vide ou bloquée par DataDome
     const isEmpty = await tab.evaluate(() => {
-      const body = document.body?.innerText?.trim() ?? ''
       const hasScript = !!document.getElementById('__NEXT_DATA__')
-      return body.length < 50 && !hasScript
+      return !hasScript
     })
+    
     if (isEmpty) {
-      console.warn(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: page vide (blocage DataDome?) — abandon`)
-      await tab.screenshot({ path: 'datadome_block.png' })
-      console.warn(`\x1b[33m[Scraper]\x1b[0m Screenshot enregistré sous 'datadome_block.png'`)
-      return []
+      console.warn(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: CAPTCHA DataDome détecté !`)
+      console.warn(`\x1b[33m[Scraper]\x1b[0m 🛑 Veuillez résoudre le Captcha MANUELLEMENT dans la fenêtre du navigateur sur le Mac mini ! (60 secondes max...)`)
+      
+      try {
+        // Attendre que le composant React de Leboncoin charge (signe que le captcha est passé)
+        await tab.waitForSelector('#__NEXT_DATA__', { timeout: 60000 })
+        console.log(`\x1b[32m[Scraper]\x1b[0m ✅ Captcha résolu avec succès !`)
+        await tab.waitForTimeout(2000) // laisser le temps à la page de bien charger
+      } catch (e) {
+        console.warn(`\x1b[31m[Scraper]\x1b[0m ❌ Temps écoulé ou échec de résolution du Captcha. Abandon.`)
+        await tab.screenshot({ path: 'datadome_block.png' })
+        return []
+      }
     }
 
     // ── Stratégie 1 : API interceptée pendant le chargement ─────────────────
@@ -194,8 +204,10 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
 
-  const browser = await chromium.launch({
-    headless: false, // DataDome bloque headless:true
+  const userDataDir = path.join(process.cwd(), 'playwright_profile')
+
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    headless: false, // Nécessaire pour résoudre le captcha manuellement
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -203,9 +215,6 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       '--no-first-run',
       '--window-size=1280,800',
     ],
-  })
-
-  const context = await browser.newContext({
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
     viewport: { width: 1280, height: 800 },
@@ -239,7 +248,7 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       }
     }
   } finally {
-    await browser.close()
+    await context.close()
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
