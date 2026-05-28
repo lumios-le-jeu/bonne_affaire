@@ -122,6 +122,8 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
     })
     if (isEmpty) {
       console.warn(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: page vide (blocage DataDome?) — abandon`)
+      await tab.screenshot({ path: 'datadome_block.png' })
+      console.warn(`\x1b[33m[Scraper]\x1b[0m Screenshot enregistré sous 'datadome_block.png'`)
       return []
     }
 
