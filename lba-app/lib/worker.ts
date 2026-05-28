@@ -215,6 +215,8 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--window-size=1280,800',
+      '--password-store=basic', // Empêche Mac de demander le mot de passe Trousseau
+      '--use-mock-keychain',    // Idem
     ],
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
