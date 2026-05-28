@@ -1,17 +1,8 @@
-/**
- * scraper.ts — Playwright scraper avec double mode :
- * 1. SSR __NEXT_DATA__ pour les catégories classiques
- * 2. Interception réseau pour l'immobilier (catégories SPA)
- *
- * Ne bloque PLUS les ressources JS/CSS pour ne pas casser DataDome.
- */
-
-import { chromium } from 'playwright-extra'
+import puppeteer from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import type { BrowserContext } from 'playwright'
 import path from 'path'
 
-chromium.use(StealthPlugin())
+puppeteer.use(StealthPlugin())
 
 export interface LBCListing {
   id: string
@@ -22,75 +13,56 @@ export interface LBCListing {
   url: string
 }
 
-// ─────────────────────────────────────────────
-// Extraction depuis le JSON annonces (SSR ou API)
-// ─────────────────────────────────────────────
-function extractFromAds(ads: any[]): LBCListing[] {
-  const listings: LBCListing[] = []
-  for (const ad of ads) {
-    const id = String(ad.list_id ?? ad.id ?? '')
-    if (!id) continue
+function extractFromAds(adsArray: any[]): LBCListing[] {
+  const results: LBCListing[] = []
+  for (const ad of adsArray) {
+    if (!ad?.list_id || !ad?.subject) continue
+    const price = ad.price ? ad.price[0] : 0
+    if (!price || price <= 0 || price > 50000000) continue
+    
+    let thumb = null
+    if (ad.images?.thumb_url) thumb = ad.images.thumb_url
+    else if (ad.images?.urls_thumb && ad.images.urls_thumb.length > 0) thumb = ad.images.urls_thumb[0]
 
-    const price = Array.isArray(ad.price) ? ad.price[0] : (ad.price ?? 0)
-    if (!price || price <= 0 || price > 50000000) continue // 50M€ max
+    let location = 'France'
+    if (ad.location?.city) location = ad.location.city
 
-    const images = ad.images ?? {}
-    const thumb =
-      images.small_url ||
-      images.urls_large?.[0] ||
-      images.urls?.[0] ||
-      images.thumb_url ||
-      null
-
-    const loc = ad.location ?? {}
-    const city = loc.city || ''
-    const zip = loc.zipcode || loc.department_id || ''
-    const location = [city, zip].filter(Boolean).join(' ') || 'France'
-
-    const adUrl = ad.url
-      ? (ad.url.startsWith('http') ? ad.url : `https://www.leboncoin.fr${ad.url}`)
-      : `https://www.leboncoin.fr/ad/annonce/${id}`
-
-    listings.push({ id, title: ad.subject ?? 'Annonce LBC', price, location, thumb, url: adUrl })
+    results.push({
+      id: ad.list_id.toString(),
+      title: ad.subject,
+      price,
+      location,
+      thumb,
+      url: ad.url || `https://www.leboncoin.fr/ad/${ad.category_name || 'divers'}/${ad.list_id}`
+    })
   }
-  return listings
+  return results
 }
 
-// ─────────────────────────────────────────────
-// Construit l'URL paginée
-// ─────────────────────────────────────────────
-function buildPageUrl(searchUrl: string, page: number): string {
-  const url = new URL(searchUrl)
-  if (page > 1) url.searchParams.set('page', String(page))
-  else url.searchParams.delete('page')
-  return url.toString()
+function buildPageUrl(searchUrl: string, pageNum: number): string {
+  const urlObj = new URL(searchUrl)
+  urlObj.searchParams.set('page', pageNum.toString())
+  return urlObj.toString()
 }
 
-// ─────────────────────────────────────────────
-// Scrape une page dans un onglet existant
-// Stratégie 1 : intercepter la réponse API réseau (immobilier SPA)
-// Stratégie 2 : lire __NEXT_DATA__ SSR (catégories classiques)
-// Stratégie 3 : fallback DOM
-// ─────────────────────────────────────────────
-async function scrapePageInTab(context: BrowserContext, url: string, pageNum: number): Promise<LBCListing[]> {
-  const tab = await context.newPage()
+async function scrapePageInTab(browser: any, url: string, pageNum: number): Promise<LBCListing[]> {
+  const page = await browser.newPage()
+  await page.setViewport({ width: 1280, height: 800 })
 
-  // ⚠️ On ne bloque PLUS les ressources — DataDome a besoin des scripts JS pour valider
-  // (bloquer CSS/fonts/images uniquement, pas JS ni XHR/fetch)
-  await tab.route('**/*', (route) => {
-    const t = route.request().resourceType()
-    if (['image', 'media', 'font', 'stylesheet'].includes(t)) route.abort()
-    else route.continue()
+  await page.setRequestInterception(true)
+  page.on('request', (request: any) => {
+    const t = request.resourceType()
+    if (['image', 'media', 'font', 'stylesheet'].includes(t)) request.abort()
+    else request.continue()
   })
 
-  // Capturer les réponses API avec des annonces (mode immobilier SPA)
   const interceptedAds: any[] = []
-  tab.on('response', async (response) => {
-    if (interceptedAds.length > 0) return // déjà trouvé
+  page.on('response', async (response: any) => {
+    if (interceptedAds.length > 0) return
     const resUrl = response.url()
     const ct = response.headers()['content-type'] || ''
     if (!ct.includes('json')) return
-    // LBC API endpoints connus pour les annonces
+    
     if (
       resUrl.includes('api.leboncoin.fr') ||
       resUrl.includes('/classified') ||
@@ -98,7 +70,6 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
       resUrl.includes('/classifieds')
     ) {
       try {
-        // Timeout sur la lecture du body pour éviter un blocage si la réponse est lente
         const jsonTimeout = new Promise<never>((_, r) => setTimeout(() => r(new Error('json timeout')), 3000))
         const json = await Promise.race([response.json(), jsonTimeout])
         const ads = (json as any)?.ads ?? (json as any)?.data?.ads ?? null
@@ -106,17 +77,15 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
           interceptedAds.push(...ads)
           console.log(`\x1b[36m[Scraper]\x1b[0m Page ${pageNum}: API interceptée — ${ads.length} annonces brutes`)
         }
-      } catch { /* ignore — réponse lente ou corps non-JSON */ }
+      } catch { /* ignore */ }
     }
   })
 
   try {
-    await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 })
-    // Attendre que DataDome valide + que les appels API soient lancés
-    await tab.waitForTimeout(3000)
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 })
+    await new Promise(r => setTimeout(r, 3000))
 
-    // Détection rapide : si la page est vide ou bloquée par DataDome
-    const isEmpty = await tab.evaluate(() => {
+    const isEmpty = await page.evaluate(() => {
       const hasScript = !!document.getElementById('__NEXT_DATA__')
       return !hasScript
     })
@@ -126,26 +95,23 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
       console.warn(`\x1b[33m[Scraper]\x1b[0m 🛑 Veuillez résoudre le Captcha MANUELLEMENT dans la fenêtre du navigateur sur le Mac mini ! (60 secondes max...)`)
       
       try {
-        // Attendre que le composant React de Leboncoin charge (signe que le captcha est passé)
-        await tab.waitForSelector('#__NEXT_DATA__', { timeout: 60000 })
+        await page.waitForSelector('#__NEXT_DATA__', { timeout: 60000 })
         console.log(`\x1b[32m[Scraper]\x1b[0m ✅ Captcha résolu avec succès !`)
-        await tab.waitForTimeout(2000) // laisser le temps à la page de bien charger
+        await new Promise(r => setTimeout(r, 2000))
       } catch (e) {
         console.warn(`\x1b[31m[Scraper]\x1b[0m ❌ Temps écoulé ou échec de résolution du Captcha. Abandon.`)
-        await tab.screenshot({ path: 'datadome_block.png' })
+        await page.screenshot({ path: 'datadome_block.png' })
         return []
       }
     }
 
-    // ── Stratégie 1 : API interceptée pendant le chargement ─────────────────
     if (interceptedAds.length > 0) {
       const parsed = extractFromAds(interceptedAds)
       console.log(`\x1b[32m[Scraper]\x1b[0m Page ${pageNum}: ${parsed.length} annonces (API réseau)`)
       return parsed
     }
 
-    // ── Stratégie 2 : __NEXT_DATA__ SSR ─────────────────────────────────────
-    const ads = await tab.evaluate(() => {
+    const ads = await page.evaluate(() => {
       const script = document.getElementById('__NEXT_DATA__')
       if (!script?.textContent) return null
       try {
@@ -165,8 +131,7 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
       return parsed
     }
 
-    // ── Stratégie 3 : Fallback DOM ───────────────────────────────────────────
-    const fallback = await tab.evaluate(() => {
+    const fallback = await page.evaluate(() => {
       const results: any[] = []
       const seen = new Set<string>()
       const adLinks = Array.from(document.querySelectorAll('a[href*="/ad/"]')) as HTMLAnchorElement[]
@@ -194,35 +159,27 @@ async function scrapePageInTab(context: BrowserContext, url: string, pageNum: nu
     console.error(`\x1b[31m[Scraper]\x1b[0m Page ${pageNum}: erreur —`, err.message)
     return []
   } finally {
-    await tab.close()
+    await page.close()
   }
 }
 
-// ─────────────────────────────────────────────
-// Point d'entrée — 1 browser, pages séquentielles
-// ─────────────────────────────────────────────
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
+  const userDataDir = path.join(process.cwd(), 'puppeteer_profile')
 
-  const userDataDir = path.join(process.cwd(), 'playwright_profile')
-
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false, // Nécessaire pour résoudre le captcha manuellement
-    channel: 'chrome', // Utiliser le VRAI Google Chrome (pas Chrome for Testing)
+  const browser = await puppeteer.launch({
+    headless: false,
+    channel: 'chrome', // Utiliser le vrai Chrome
+    userDataDir,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--window-size=1280,800',
-      '--password-store=basic', // Empêche Mac de demander le mot de passe Trousseau
-      '--use-mock-keychain',    // Idem
-      '--remote-debugging-port=9222',       // Permet le contrôle à distance depuis le PC Windows !
-      '--remote-debugging-address=0.0.0.0', // Accessible sur le réseau local
-    ],
-    locale: 'fr-FR',
-    timezoneId: 'Europe/Paris',
-    viewport: { width: 1280, height: 800 },
+      '--password-store=basic',
+      '--use-mock-keychain',
+    ]
   })
 
   console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage séquentiel — ${MAX_PAGES} pages max`)
@@ -233,7 +190,7 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
 
   try {
     for (let p = 1; p <= MAX_PAGES; p++) {
-      const pageListings = await scrapePageInTab(context, buildPageUrl(searchUrl, p), p)
+      const pageListings = await scrapePageInTab(browser, buildPageUrl(searchUrl, p), p)
 
       for (const l of pageListings) {
         if (!seen.has(l.id)) {
@@ -248,12 +205,12 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
       }
 
       if (p < MAX_PAGES) {
-        const delay = Math.floor(Math.random() * 2000 + 2000) // 2 à 4 sec
+        const delay = Math.floor(Math.random() * 2000 + 2000)
         await new Promise(r => setTimeout(r, delay))
       }
     }
   } finally {
-    await context.close()
+    await browser.close()
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
@@ -262,9 +219,7 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
   return allListings
 }
 
-// ─────────────────────────────────────────────
 // Execution CLI
-// ─────────────────────────────────────────────
 if (require.main === module || process.argv[1]?.endsWith('worker.ts')) {
   const url = process.argv[2]
   if (url) {
