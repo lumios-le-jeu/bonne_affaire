@@ -206,20 +206,9 @@ export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> 
   })
 
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'fr-FR',
     timezoneId: 'Europe/Paris',
     viewport: { width: 1280, height: 800 },
-    extraHTTPHeaders: {
-      'accept-language': 'fr-FR,fr;q=0.9',
-    },
-  })
-
-  // Masquer webdriver
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] })
-    Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr'] })
   })
 
   console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage séquentiel — ${MAX_PAGES} pages max`)
