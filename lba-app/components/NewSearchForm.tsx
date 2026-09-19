@@ -30,16 +30,14 @@ export default function NewSearchForm({ onSearchAdded }: { onSearchAdded: (newId
       const data = await res.json()
       const newId: string = data.id
 
-      // Déclencher le scan initial via /api/scrape
-      await fetch('/api/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ searchId: newId }),
-      })
+      // Plus de /api/scrape : l'ancien worker SSH n'existe plus. La collecte
+      // est desormais tiree par l'extension Chrome, qui recupere le plan sur
+      // /api/queue. Pour un premier scan immediat : icone de l'extension →
+      // « Collecter maintenant ».
 
       setUrl('')
       setName('')
-      setSuccess('✅ Recherche ajoutée ! Scan en cours...')
+      setSuccess('✅ Recherche ajoutée ! Lance « Collecter maintenant » dans l\'extension.')
       onSearchAdded(newId) // passe l'ID pour que le parent puisse poller
     } catch (err: any) {
       setError(err.message)

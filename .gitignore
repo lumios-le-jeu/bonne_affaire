@@ -2,3 +2,24 @@ node_modules/
 .env
 .env.local
 .DS_Store
+
+# Artefacts de build : lourds, regeneres a chaque demarrage, et source de
+# conflits entre le PC et le Mac.
+.next/
+*.tsbuildinfo
+
+# La base ne doit PAS transiter par git : un pull ecraserait silencieusement
+# l'historique de prix du cote qui n'a pas commite en dernier. Elle se copie
+# explicitement, par scp, quand on decide laquelle fait foi.
+*.db
+*.db-journal
+*.db.bak
+
+# Sorties de debug de l'ancien scraper
+debug*.json
+debug*.txt
+debug*.html
+debug*.png
+server_log.txt
+best_local.json
+searches_local.json

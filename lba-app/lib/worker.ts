@@ -1,8 +1,5 @@
-import puppeteer from 'puppeteer-extra'
-import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import path from 'path'
-
-puppeteer.use(StealthPlugin())
+import { spawn } from 'child_process'
+import 'dotenv/config'
 
 export interface LBCListing {
   id: string
@@ -45,164 +42,135 @@ function buildPageUrl(searchUrl: string, pageNum: number): string {
   return urlObj.toString()
 }
 
-async function scrapePageInTab(browser: any, url: string, pageNum: number): Promise<LBCListing[]> {
-  const page = await browser.newPage()
-  await page.setViewport({ width: 1280, height: 800 })
+// Fonction pour exécuter un AppleScript sur le Mac mini via SSH
+async function runAppleScriptSSH(script: string): Promise<string> {
+  const sshHost = process.env.MAC_SSH_HOST
+  if (!sshHost) {
+    throw new Error("ERREUR: La variable d'environnement MAC_SSH_HOST n'est pas définie (ex: MAC_SSH_HOST=user@192.168.1.50). Veuillez l'ajouter dans votre fichier .env")
+  }
 
-  await page.setRequestInterception(true)
-  page.on('request', (request: any) => {
-    const t = request.resourceType()
-    if (['image', 'media', 'font', 'stylesheet'].includes(t)) request.abort()
-    else request.continue()
-  })
-
-  const interceptedAds: any[] = []
-  page.on('response', async (response: any) => {
-    if (interceptedAds.length > 0) return
-    const resUrl = response.url()
-    const ct = response.headers()['content-type'] || ''
-    if (!ct.includes('json')) return
+  return new Promise((resolve, reject) => {
+    // Exécution de 'ssh user@ip osascript'
+    const child = spawn('ssh', [sshHost, 'osascript']);
+    let stdout = '';
+    let stderr = '';
     
-    if (
-      resUrl.includes('api.leboncoin.fr') ||
-      resUrl.includes('/classified') ||
-      resUrl.includes('/ad-search') ||
-      resUrl.includes('/classifieds')
-    ) {
-      try {
-        const jsonTimeout = new Promise<never>((_, r) => setTimeout(() => r(new Error('json timeout')), 3000))
-        const json = await Promise.race([response.json(), jsonTimeout])
-        const ads = (json as any)?.ads ?? (json as any)?.data?.ads ?? null
-        if (Array.isArray(ads) && ads.length > 0) {
-          interceptedAds.push(...ads)
-          console.log(`\x1b[36m[Scraper]\x1b[0m Page ${pageNum}: API interceptée — ${ads.length} annonces brutes`)
-        }
-      } catch { /* ignore */ }
+    child.stdout.on('data', (data) => stdout += data);
+    child.stderr.on('data', (data) => stderr += data);
+    
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(`Erreur SSH (code ${code}): ${stderr}`));
+      }
+    });
+
+    child.on('error', (err) => {
+      reject(new Error(`Impossible de lancer SSH: ${err.message}`));
+    });
+
+    // Envoi du script via stdin
+    child.stdin.write(script);
+    child.stdin.end();
+  });
+}
+
+async function scrapePageMac(url: string, pageNum: number): Promise<LBCListing[]> {
+  console.log(`\x1b[36m[Scraper Mac]\x1b[0m Page ${pageNum}: Navigation vers ${url}...`)
+  
+  // Script 1: Naviguer vers l'URL
+  const navScript = `
+    tell application "Google Chrome"
+      activate
+      set URL of active tab of window 1 to "${url}"
+      delay 4
+    end tell
+  `
+  await runAppleScriptSSH(navScript)
+
+  // Script 2: Boucle pour extraire les données et surveiller DataDome
+  let attempts = 0;
+  while (attempts < 12) { // Maximum ~60 secondes d'attente (12 * 5s)
+    const extractScript = `
+      tell application "Google Chrome"
+        set jsonText to execute active tab of window 1 javascript "
+          var script = document.getElementById('__NEXT_DATA__');
+          if (script) {
+            return script.textContent;
+          } else {
+            return 'NOT_FOUND';
+          }
+        "
+        return jsonText
+      end tell
+    `
+    const data = await runAppleScriptSSH(extractScript)
+    
+    if (data === "NOT_FOUND" || data === "") {
+      console.warn(`\x1b[33m[Scraper Mac]\x1b[0m Page ${pageNum}: CAPTCHA DataDome détecté (ou page non chargée) !`)
+      console.warn(`\x1b[33m[Scraper Mac]\x1b[0m 🛑 Veuillez résoudre le Captcha MANUELLEMENT sur le Mac mini ! En attente...`)
+      await new Promise(r => setTimeout(r, 5000))
+      attempts++
+      continue
     }
-  })
 
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 })
-    await new Promise(r => setTimeout(r, 3000))
-
-    const isEmpty = await page.evaluate(() => {
-      const hasScript = !!document.getElementById('__NEXT_DATA__')
-      return !hasScript
-    })
-    
-    if (isEmpty) {
-      console.warn(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: CAPTCHA DataDome détecté !`)
-      console.warn(`\x1b[33m[Scraper]\x1b[0m 🛑 Veuillez résoudre le Captcha MANUELLEMENT dans la fenêtre du navigateur sur le Mac mini ! (60 secondes max...)`)
-      
-      try {
-        await page.waitForSelector('#__NEXT_DATA__', { timeout: 60000 })
-        console.log(`\x1b[32m[Scraper]\x1b[0m ✅ Captcha résolu avec succès !`)
-        await new Promise(r => setTimeout(r, 2000))
-      } catch (e) {
-        console.warn(`\x1b[31m[Scraper]\x1b[0m ❌ Temps écoulé ou échec de résolution du Captcha. Abandon.`)
-        await page.screenshot({ path: 'datadome_block.png' })
+    try {
+      const parsed = JSON.parse(data)
+      const ads = (parsed as any)?.props?.pageProps?.searchData?.ads ??
+                  (parsed as any)?.props?.pageProps?.ads ??
+                  (parsed as any)?.props?.pageProps?.initialSearchData?.ads ?? null
+                  
+      if (ads && Array.isArray(ads) && ads.length > 0) {
+        const listings = extractFromAds(ads)
+        console.log(`\x1b[32m[Scraper Mac]\x1b[0m Page ${pageNum}: ${listings.length} annonces extraites via AppleScript`)
+        return listings
+      } else {
+        console.warn(`\x1b[33m[Scraper Mac]\x1b[0m Page ${pageNum}: Aucun résultat d'annonces trouvé dans le JSON.`)
         return []
       }
+    } catch (e: any) {
+      console.error(`\x1b[31m[Scraper Mac]\x1b[0m Page ${pageNum}: Erreur de parsing JSON —`, e.message)
+      return []
     }
-
-    if (interceptedAds.length > 0) {
-      const parsed = extractFromAds(interceptedAds)
-      console.log(`\x1b[32m[Scraper]\x1b[0m Page ${pageNum}: ${parsed.length} annonces (API réseau)`)
-      return parsed
-    }
-
-    const ads = await page.evaluate(() => {
-      const script = document.getElementById('__NEXT_DATA__')
-      if (!script?.textContent) return null
-      try {
-        const data = JSON.parse(script.textContent)
-        return (
-          data?.props?.pageProps?.searchData?.ads ??
-          data?.props?.pageProps?.ads ??
-          data?.props?.pageProps?.initialSearchData?.ads ??
-          null
-        )
-      } catch { return null }
-    })
-
-    if (ads && Array.isArray(ads) && ads.length > 0) {
-      const parsed = extractFromAds(ads)
-      console.log(`\x1b[32m[Scraper]\x1b[0m Page ${pageNum}: ${parsed.length} annonces (__NEXT_DATA__)`)
-      return parsed
-    }
-
-    const fallback = await page.evaluate(() => {
-      const results: any[] = []
-      const seen = new Set<string>()
-      const adLinks = Array.from(document.querySelectorAll('a[href*="/ad/"]')) as HTMLAnchorElement[]
-      adLinks.forEach(anchor => {
-        const idMatch = anchor.href.match(/\/ad\/[^/]+\/(\d+)/)
-        if (!idMatch) return
-        const adId = idMatch[1]
-        if (seen.has(adId)) return
-        seen.add(adId)
-        const card = anchor.closest('article') || anchor.closest('li') || anchor.parentElement
-        if (!card) return
-        const found = card.textContent?.match(/(\d[\d\s\u00A0]*)[\s\u00A0]*€/)
-        const price = found ? parseInt(found[1].replace(/\s|\u00A0/g, '')) : 0
-        if (!price || price <= 0 || price > 50000000) return
-        const title = (card as HTMLElement).getAttribute('aria-label') || 'Annonce LBC'
-        results.push({ id: adId, title, price, location: 'France', thumb: null, url: anchor.href })
-      })
-      return results
-    })
-
-    console.log(`\x1b[33m[Scraper]\x1b[0m Page ${pageNum}: ${fallback.length} annonces (DOM fallback)`)
-    return fallback as LBCListing[]
-
-  } catch (err: any) {
-    console.error(`\x1b[31m[Scraper]\x1b[0m Page ${pageNum}: erreur —`, err.message)
-    return []
-  } finally {
-    await page.close()
   }
+
+  console.warn(`\x1b[31m[Scraper Mac]\x1b[0m ❌ Temps écoulé ou échec de résolution du Captcha sur le Mac. Abandon de la page ${pageNum}.`)
+  return []
 }
 
 export async function scrapeLeboncoin(searchUrl: string): Promise<LBCListing[]> {
   const MAX_PAGES = 8
-  const browser = await puppeteer.connect({
-    browserURL: 'http://127.0.0.1:47812',
-    defaultViewport: null
-  })
-
-  console.log(`\x1b[36m[Scraper]\x1b[0m Démarrage séquentiel — ${MAX_PAGES} pages max`)
+  console.log(`\x1b[36m[Scraper Mac]\x1b[0m Démarrage via SSH sur le Mac — ${MAX_PAGES} pages max`)
   const start = Date.now()
 
   const allListings: LBCListing[] = []
   const seen = new Set<string>()
 
-  try {
-    for (let p = 1; p <= MAX_PAGES; p++) {
-      const pageListings = await scrapePageInTab(browser, buildPageUrl(searchUrl, p), p)
+  for (let p = 1; p <= MAX_PAGES; p++) {
+    const pageListings = await scrapePageMac(buildPageUrl(searchUrl, p), p)
 
-      for (const l of pageListings) {
-        if (!seen.has(l.id)) {
-          seen.add(l.id)
-          allListings.push(l)
-        }
-      }
-
-      if (pageListings.length === 0) {
-        console.log(`\x1b[33m[Scraper]\x1b[0m Page vide, arrêt anticipé.`)
-        break
-      }
-
-      if (p < MAX_PAGES) {
-        const delay = Math.floor(Math.random() * 2000 + 2000)
-        await new Promise(r => setTimeout(r, delay))
+    for (const l of pageListings) {
+      if (!seen.has(l.id)) {
+        seen.add(l.id)
+        allListings.push(l)
       }
     }
-  } finally {
-    await browser.disconnect()
+
+    if (pageListings.length === 0) {
+      console.log(`\x1b[33m[Scraper Mac]\x1b[0m Page vide ou fin des résultats, arrêt anticipé.`)
+      break
+    }
+
+    if (p < MAX_PAGES) {
+      // Petite pause aléatoire pour imiter un comportement humain
+      const delay = Math.floor(Math.random() * 2000 + 1500)
+      await new Promise(r => setTimeout(r, delay))
+    }
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
-  console.log(`\x1b[32m[Scraper]\x1b[0m ✅ ${allListings.length} annonces en ${elapsed}s`)
+  console.log(`\x1b[32m[Scraper Mac]\x1b[0m ✅ Terminé: ${allListings.length} annonces scrapées en ${elapsed}s`)
 
   return allListings
 }

@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "LBA Collector",
+  "version": "1.0.0",
+  "description": "Moissonne les annonces Leboncoin depuis ta session Chrome reelle et les envoie a LaBonneAffaire (localhost).",
+  "permissions": ["storage", "alarms", "tabs", "notifications"],
+  "host_permissions": [
+    "https://www.leboncoin.fr/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "LBA Collector",
+    "default_icon": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.leboncoin.fr/*"],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.leboncoin.fr/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    }
+  ]
+}

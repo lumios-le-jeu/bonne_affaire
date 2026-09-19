@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { width: 340px; margin: 0; padding: 14px;
+         font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 14px; margin: 0 0 10px; letter-spacing: .01em; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0;
+         border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+  .row span:last-child { font-variant-numeric: tabular-nums; opacity: .8; }
+  .bad { color: #c0392b; font-weight: 600; }
+  .ok  { color: #1e8449; font-weight: 600; }
+  button { margin: 12px 6px 0 0; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+           border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+           background: transparent; color: inherit; font: inherit; }
+  button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+  pre { margin: 12px 0 0; max-height: 190px; overflow: auto; font-size: 11px;
+        line-height: 1.5; opacity: .75; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>LBA Collector</h1>
+  <div class="row"><span>Etat</span><span id="state">…</span></div>
+  <div class="row"><span>Etapes restantes</span><span id="plan">–</span></div>
+  <div class="row"><span>Prochaine visite</span><span id="next">–</span></div>
+  <div class="row"><span>Lots en attente</span><span id="outbox">–</span></div>
+  <div class="row"><span>App locale</span>
+    <input id="api" type="text" spellcheck="false"
+           style="width:170px;text-align:right;border:none;background:transparent;
+                  color:inherit;font:inherit;border-bottom:1px dotted;">
+  </div>
+  <button id="run">Collecter maintenant</button>
+  <button id="reset">Reinitialiser</button>
+  <pre id="log"></pre>
+  <script src="popup.js"></script>
+</body>
+</html>
