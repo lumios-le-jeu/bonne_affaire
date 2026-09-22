@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { cleanSearchUrl } from '@/lib/search-url'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,8 +35,36 @@ export async function GET(req: NextRequest) {
     orderBy: { lastScraped: 'asc' },
   })
 
+  // Verrou : une recherche deja prise en charge par un autre collecteur n'est
+  // pas redistribuee. Sans ca, deux navigateurs (le portable et le Mac) qui
+  // demandent un plan a quelques minutes d'intervalle collecteraient les memes
+  // pages en double — trafic double, donc risque de blocage double, pour zero
+  // donnee supplementaire. lastScraped ne suffit pas : il n'est ecrit qu'a la
+  // fin du passage.
+  const claimCutoff = new Date(Date.now() - 3 * 3600_000)
+  const claimed = new Set(
+    (
+      await prisma.scanRun.findMany({
+        where: { finishedAt: null, startedAt: { gte: claimCutoff } },
+        select: { searchId: true },
+      })
+    ).map((r) => r.searchId)
+  )
+
   const out = []
   for (const s of searches) {
+    if (claimed.has(s.id) && !force) continue
+
+    // Auto-reparation des recherches creees avant le nettoyage a la saisie
+    // (ex. V-STROM et son espace de largeur nulle). Si l'URL propre existe
+    // deja sous une autre recherche, on garde l'ancienne en base mais on
+    // visite quand meme la version propre.
+    const url = cleanSearchUrl(s.url)
+    if (url !== s.url) {
+      await prisma.search.update({ where: { id: s.id }, data: { url } }).catch(() => {})
+      console.log(`\x1b[33m[Queue]\x1b[0m URL nettoyee pour "${s.name.trim()}" (caracteres invisibles)`)
+    }
+
     // Combien de pages pour couvrir le perimetre ? On ajoute une page de marge :
     // sans elle, un scan a la limite exacte n'est jamais juge "complet".
     const needed = s.lastTotal
@@ -50,7 +79,7 @@ export async function GET(req: NextRequest) {
       searchId: s.id,
       runId: run.id,
       name: s.name,
-      url: s.url,
+      url,
       pages: Array.from({ length: needed }, (_, i) => i + 1),
     })
   }

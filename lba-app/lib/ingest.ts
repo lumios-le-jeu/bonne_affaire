@@ -1,4 +1,5 @@
 import { prisma } from './prisma'
+import { queryOf } from './search-url'
 
 /**
  * Ingestion des lots envoyes par l'extension.
@@ -167,15 +168,19 @@ export async function ingestPage(input: {
   return { stored: ads.length, searchId }
 }
 
+/**
+ * Filet de secours pour les lots arrives sans searchId — en pratique, les
+ * pages que tu consultes toi-meme. Les lots de la collecte planifiee, eux,
+ * portent leur searchId depuis l'extension et ne passent pas par ici.
+ * Comparaison sur la requete normalisee : casse, espaces, "+" et caracteres
+ * invisibles ne doivent pas suffire a perdre un lot.
+ */
 async function matchSearchByQuery(url: string): Promise<string | null> {
-  let q: string
-  try { q = new URL(url).searchParams.get('text') || '' } catch { return null }
+  const q = queryOf(url)
   if (!q) return null
   const searches = await prisma.search.findMany({ where: { isTracking: true } })
   for (const s of searches) {
-    try {
-      if ((new URL(s.url).searchParams.get('text') || '') === q) return s.id
-    } catch { /* url stockee invalide */ }
+    if (queryOf(s.url) === q) return s.id
   }
   return null
 }

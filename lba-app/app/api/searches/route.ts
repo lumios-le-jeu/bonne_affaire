@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { cleanSearchUrl } from '@/lib/search-url'
 
 // GET /api/searches - List all searches
 export async function GET() {
@@ -50,7 +51,10 @@ export async function GET() {
 // POST /api/searches - Create a new search
 export async function POST(request: Request) {
   try {
-    const { name, url } = await request.json()
+    const body = await request.json()
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    // Caracteres invisibles herites d'un copier-coller : voir lib/search-url.ts.
+    const url = typeof body.url === 'string' ? cleanSearchUrl(body.url) : ''
     if (!name || !url) {
       return NextResponse.json({ error: 'name and url are required' }, { status: 400 })
     }
