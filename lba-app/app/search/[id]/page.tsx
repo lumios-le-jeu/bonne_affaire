@@ -27,6 +27,29 @@ ChartJS.register(
   Filler,
 )
 
+/**
+ * Plafond au-dela duquel un prix est traite comme aberrant dans les graphiques
+ * (faux 99 999 €, erreur de saisie, article hors sujet).
+ *
+ * Il etait fixe a 50 000 €, ce qui vidait entierement le graphique des
+ * recherches immobilieres : chaque annonce depasse ce montant, donc aucun
+ * point ne passait le filtre. On le calcule desormais sur les donnees
+ * elles-memes — borne de Tukey elargie, Q3 + 3 x IQR — qui s'adapte aussi
+ * bien a un marche de montres a 50 € qu'a un marche d'appartements.
+ *
+ * En dessous de 8 annonces, on ne filtre rien : trop peu de donnees pour
+ * distinguer une aberration d'un prix simplement eleve.
+ */
+function outlierCap(prices: number[]): number {
+  const p = prices.filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b)
+  if (p.length < 8) return Infinity
+  const at = (r: number) => p[Math.min(p.length - 1, Math.floor(r * (p.length - 1)))]
+  const q1 = at(0.25)
+  const q3 = at(0.75)
+  const iqr = q3 - q1
+  return iqr > 0 ? q3 + 3 * iqr : q3 * 3
+}
+
 export default function SearchDetail({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
   const { id } = unwrappedParams;
@@ -171,7 +194,10 @@ export default function SearchDetail({ params }: { params: Promise<{ id: string 
     return new Date(ya, ma - 1, da).getTime() - new Date(yb, mb - 1, db).getTime()
   })
   
-  const MAX_PRICE_THRESHOLD = 50000 // Defensive filter for the UI (safe for most items)
+  // Seuil calcule sur la recherche en cours, pas en dur : voir outlierCap().
+  const MAX_PRICE_THRESHOLD = outlierCap(
+    data.listings.filter((l: any) => l.status !== 'excluded').map((l: any) => l.price)
+  )
   
   const allListingPoints = data.listings
     .filter((l: any) => l.status !== 'excluded' && l.price < MAX_PRICE_THRESHOLD)
@@ -314,7 +340,12 @@ export default function SearchDetail({ params }: { params: Promise<{ id: string 
             </span>
           )}
           {type === 'sold' && <span style={{fontSize: '0.75rem', color: 'var(--success)'}}>Vendu en {l.daysToSell} j.</span>}
-          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Vu le {new Date(l.firstSeen).toLocaleDateString()}</span>
+          <span
+            style={{ fontSize: '0.75rem', color: '#64748b' }}
+            title="Date de mise en ligne de l'annonce sur Leboncoin, telle qu'annoncée par le site"
+          >
+            En ligne depuis le {new Date(l.firstSeen).toLocaleDateString()}
+          </span>
           
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             {type === 'active' ? (
