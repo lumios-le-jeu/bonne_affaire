@@ -211,13 +211,11 @@ export async function finalizeRun(runId: string) {
       const daysSinceSeen = (now.getTime() - new Date(l.lastSeen).getTime()) / 86_400_000
 
       if (n >= MISSING_RUNS_BEFORE_SOLD && daysSinceSeen >= MIN_DAYS_BEFORE_SOLD) {
-        const daysToSell = Math.max(
-          0,
-          Math.round((new Date(l.lastSeen).getTime() - new Date(l.firstSeen).getTime()) / 86_400_000)
-        )
+        const daysToSell = await measuredDaysToSell(searchId, l.firstSeen, l.lastSeen, run.startedAt)
         // On date la vente a la derniere observation, pas a aujourd'hui :
         // l'annonce a disparu quelque part entre les deux, et lastSeen est la
-        // seule borne dont on soit sur.
+        // seule borne dont on soit sur. daysToSell reste null si cette
+        // fenetre est trop large pour etre une mesure (voir plus bas).
         await prisma.listing.update({
           where: { id: l.id },
           data: { status: 'sold', soldAt: l.lastSeen, daysToSell, missingCount: n },
@@ -243,6 +241,50 @@ export async function finalizeRun(runId: string) {
   await prisma.search.update({ where: { id: searchId }, data: { lastScraped: now } })
 
   return { ok: true, complete, sold, aged, adsSeen: run.adsSeen, total: run.total }
+}
+
+/* ------------------------------------------------------------------ *
+ * Mesure du delai de vente
+ * ------------------------------------------------------------------ */
+
+/**
+ * Au-dela de cet ecart entre la derniere observation d'une annonce et le
+ * premier passage complet qui ne l'a plus trouvee, on sait qu'elle est partie
+ * mais pas quand : ce n'est plus une mesure.
+ */
+export const MAX_OBSERVATION_GAP_DAYS = 3
+
+/**
+ * Renvoie le delai de vente en jours, ou null s'il n'a pas ete observe.
+ *
+ * Cas typique du null : les annonces heritees de l'ancien scraper, vues pour
+ * la derniere fois le 13 mai puis constatees absentes en septembre. Elles
+ * sont bien vendues, mais leur delai calcule (lastSeen - firstSeen) valait 0
+ * jour parce que l'ancien scraper ne les avait croisees qu'une fois. Meme
+ * chose apres une semaine sans collecte : les ventes survenues pendant le
+ * trou sont comptees, pas mesurees.
+ *
+ * @param fallbackStart debut du passage en cours, si c'est lui le premier a
+ *        constater l'absence (il n'est pas encore marque complet en base).
+ */
+export async function measuredDaysToSell(
+  searchId: string,
+  firstSeen: Date,
+  lastSeen: Date,
+  fallbackStart?: Date
+): Promise<number | null> {
+  const firstMiss = await prisma.scanRun.findFirst({
+    where: { searchId, complete: true, startedAt: { gt: lastSeen } },
+    orderBy: { startedAt: 'asc' },
+    select: { startedAt: true },
+  })
+  const missAt = firstMiss?.startedAt ?? fallbackStart
+  if (!missAt) return null
+
+  const gapDays = (missAt.getTime() - new Date(lastSeen).getTime()) / 86_400_000
+  if (gapDays > MAX_OBSERVATION_GAP_DAYS) return null
+
+  return Math.max(0, Math.round((new Date(lastSeen).getTime() - new Date(firstSeen).getTime()) / 86_400_000))
 }
 
 async function snapshot(searchId: string, now: Date) {

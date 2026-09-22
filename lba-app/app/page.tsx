@@ -162,7 +162,8 @@ export default function Home() {
       <BestSellers refreshKey={refreshKey} />
       
       <div style={{ marginTop: '4rem', padding: '1rem', borderTop: '1px solid var(--card-border)', color: '#64748b', fontSize: '0.8rem', textAlign: 'center' }}>
-        Pour automatiser, configurez un cron OS pour appeler <code>POST /api/scrape</code> avec l'ID du produit.
+        Collecte automatique par l&apos;extension Chrome LBA Collector, environ une fois par jour et par recherche.
+        Les délais de vente ne sont comptés que pour les disparitions observées à moins de 3 jours près.
       </div>
     </div>
   )
