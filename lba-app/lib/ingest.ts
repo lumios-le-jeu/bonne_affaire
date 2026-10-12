@@ -1,5 +1,6 @@
 import { prisma } from './prisma'
-import { queryOf } from './search-url'
+import { searchKeyOf } from './search-url'
+import { normalizeFb, type FbListing } from './fb'
 
 /**
  * Ingestion des lots envoyes par l'extension.
@@ -99,14 +100,22 @@ export async function ingestPage(input: {
   url: string
   page?: number
   total?: number | null
-  ads: RawAd[]
+  source?: string | null
+  ads: RawAd[] | FbListing[]
 }) {
-  const ads = input.ads.map(normalize).filter((a): a is NormalAd => a !== null)
+  const source = input.source === 'facebook' ? 'facebook' : 'leboncoin'
+
+  const ads =
+    source === 'facebook'
+      ? (input.ads as FbListing[]).map(normalizeFb).filter((a): a is NormalAd => a !== null)
+      : (input.ads as RawAd[]).map(normalize).filter((a): a is NormalAd => a !== null)
   if (!ads.length) return { stored: 0, reason: 'lot vide' }
 
-  // Rattachement : identifiant fourni par l'extension, sinon meme requete texte.
+  // Rattachement : identifiant fourni par l'extension (collecte planifiee),
+  // sinon rapprochement par cle de recherche — seul mode possible pour
+  // Facebook, ou rien n'est planifie.
   let searchId = input.searchId || null
-  if (!searchId) searchId = await matchSearchByQuery(input.url)
+  if (!searchId) searchId = await matchSearchByKey(input.url, source)
   if (!searchId) return { stored: 0, reason: 'aucune recherche suivie ne correspond' }
 
   const now = new Date()
@@ -132,7 +141,7 @@ export async function ingestPage(input: {
       create: {
         id: a.id, title: a.title, price: a.price, location: a.location, zipcode: a.zipcode,
         thumb: a.thumb, url: a.url, isPro: a.isPro, hasShipping: a.hasShipping,
-        publishedAt: a.publishedAt, raw: a.raw, status, searchId,
+        publishedAt: a.publishedAt, raw: a.raw, status, searchId, source,
         firstSeen,
         lastSeen: now,
       },
@@ -140,7 +149,7 @@ export async function ingestPage(input: {
         title: a.title, price: a.price, location: a.location, zipcode: a.zipcode,
         thumb: a.thumb, url: a.url, isPro: a.isPro, hasShipping: a.hasShipping,
         publishedAt: a.publishedAt ?? existing?.publishedAt, raw: a.raw,
-        status, lastSeen: now, missingCount: 0, firstSeen,
+        status, lastSeen: now, missingCount: 0, firstSeen, source,
         // Une annonce revue n'est plus vendue : on annule un verdict premature.
         ...(status === 'active' ? { soldAt: null, daysToSell: null } : {}),
       },
@@ -165,22 +174,37 @@ export async function ingestPage(input: {
     await prisma.search.update({ where: { id: searchId }, data: { lastTotal: input.total } }).catch(() => {})
   }
 
+  // Facebook n'a ni passage ni bilan : il n'existe aucun moment ou l'on puisse
+  // dire "le perimetre a ete couvert". On date donc la derniere collecte et on
+  // met a jour le point du jour ici meme. Et jamais de verdict de vente : un
+  // fil Marketplace est classe et personnalise, une annonce absente n'est pas
+  // une annonce vendue.
+  if (source === 'facebook') {
+    await prisma.search.update({ where: { id: searchId }, data: { lastScraped: now } }).catch(() => {})
+    await snapshot(searchId, now)
+  }
+
   return { stored: ads.length, searchId }
 }
 
 /**
- * Filet de secours pour les lots arrives sans searchId — en pratique, les
- * pages que tu consultes toi-meme. Les lots de la collecte planifiee, eux,
- * portent leur searchId depuis l'extension et ne passent pas par ici.
- * Comparaison sur la requete normalisee : casse, espaces, "+" et caracteres
- * invisibles ne doivent pas suffire a perdre un lot.
+ * Rapprochement d'un lot avec une recherche suivie, par cle canonique.
+ *
+ * C'est la seule voie pour Facebook — rien n'y est planifie, on ne sait donc
+ * pas d'avance ce que tu vas consulter. Cote Leboncoin, c'est le filet de
+ * secours pour les pages que tu ouvres toi-meme : la collecte planifiee, elle,
+ * porte son searchId depuis l'extension.
+ *
+ * Aucune recherche n'est creee automatiquement : tu ajoutes la recherche dans
+ * le tableau de bord, et seules les pages correspondantes sont enregistrees.
+ * Sans cette regle, le moindre detour sur Marketplace remplirait ta base.
  */
-async function matchSearchByQuery(url: string): Promise<string | null> {
-  const q = queryOf(url)
-  if (!q) return null
-  const searches = await prisma.search.findMany({ where: { isTracking: true } })
+async function matchSearchByKey(url: string, source: string): Promise<string | null> {
+  const key = searchKeyOf(url)
+  if (!key) return null
+  const searches = await prisma.search.findMany({ where: { isTracking: true, source } })
   for (const s of searches) {
-    if (queryOf(s.url) === q) return s.id
+    if (searchKeyOf(s.url) === key) return s.id
   }
   return null
 }

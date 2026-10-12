@@ -257,6 +257,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
     })();
   }
+  // Facebook Marketplace : lecture passive. Aucun plan, aucun onglet ouvert,
+  // aucune detection de vente cote serveur — seulement ce que tu as consulte.
+  if (msg.type === "fb-ads") {
+    (async () => {
+      await deliver({ source: "facebook", url: msg.url, ads: msg.ads });
+      await log(`marketplace : ${msg.ads.length} annonces lues`);
+    })();
+  }
   if (msg.type === "blocked" && !busy) {
     set({ blockedUntil: now() + BLOCK_PAUSE_MS });
     log("blocage detecte pendant ta navigation — collecte en pause 6 h");

@@ -12,6 +12,12 @@ model Search {
   name        String
   url         String    @unique
   isTracking  Boolean   @default(false)
+
+  /// "leboncoin" (collecte planifiee, detection de vente) ou "facebook"
+  /// (collecte passive : on n'enregistre que ce que tu consultes toi-meme,
+  /// voir extension/fb-content.js). Marketplace ne sert jamais la totalite
+  /// des resultats, donc aucune disparition n'y est interpretable.
+  source      String    @default("leboncoin")
   lastScraped DateTime?
   createdAt   DateTime  @default(now())
 
@@ -25,7 +31,10 @@ model Search {
 }
 
 model Listing {
+  /// Prefixe par "fb:" pour les annonces Marketplace : les identifiants
+  /// numeriques des deux sites pourraient sinon se telescoper.
   id        String   @id
+  source    String   @default("leboncoin")
   title     String
   price     Int
   location  String?

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { cleanSearchUrl } from '@/lib/search-url'
+import { cleanSearchUrl, sourceOf, searchKeyOf } from '@/lib/search-url'
 
 // GET /api/searches - List all searches
 export async function GET() {
@@ -59,6 +59,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'name and url are required' }, { status: 400 })
     }
 
+    const source = sourceOf(url)
+    if (!source) {
+      return NextResponse.json(
+        { error: 'URL non reconnue : seuls leboncoin.fr et facebook.com/marketplace sont gérés.' },
+        { status: 400 }
+      )
+    }
+    // Une URL Marketplace sans paramètre query ne désigne aucune recherche
+    // précise : rien ne pourrait lui être rattaché.
+    if (!searchKeyOf(url)) {
+      return NextResponse.json(
+        {
+          error:
+            source === 'facebook'
+              ? "Cette URL Marketplace n'a pas de recherche : ouvre Marketplace, tape ta recherche, puis copie l'URL obtenue."
+              : "Cette URL n'a pas de texte de recherche.",
+        },
+        { status: 400 }
+      )
+    }
+
     // Checking if the URL already exists
     const existing = await prisma.search.findUnique({ where: { url } })
     if (existing) {
@@ -66,7 +87,7 @@ export async function POST(request: Request) {
     }
 
     const search = await prisma.search.create({
-      data: { name, url, isTracking: true },
+      data: { name, url, isTracking: true, source },
     })
 
     // Le scan initial est déclenché par le UI (NewSearchForm) qui poll ensuite le résultat

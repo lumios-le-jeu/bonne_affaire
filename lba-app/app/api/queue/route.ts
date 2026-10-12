@@ -30,6 +30,10 @@ export async function GET(req: NextRequest) {
   const searches = await prisma.search.findMany({
     where: {
       isTracking: true,
+      // Les recherches Facebook ne sont jamais planifiees : leur collecte est
+      // passive, l'extension n'ouvre aucun onglet Marketplace. Piloter une
+      // session Facebook connectee exposerait le compte personnel.
+      source: 'leboncoin',
       ...(force ? {} : { OR: [{ lastScraped: null }, { lastScraped: { lt: cutoff } }] }),
     },
     orderBy: { lastScraped: 'asc' },

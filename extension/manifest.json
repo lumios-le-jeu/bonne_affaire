@@ -2,12 +2,15 @@
   "manifest_version": 3,
   "name": "LBA Collector",
   "version": "1.0.0",
-  "description": "Moissonne les annonces Leboncoin depuis ta session Chrome reelle et les envoie a LaBonneAffaire (localhost).",
+  "description": "Moissonne les annonces Leboncoin, et en lecture passive celles de Facebook Marketplace, depuis ta session Chrome reelle.",
   "permissions": ["storage", "alarms", "tabs", "notifications"],
   "host_permissions": [
     "https://www.leboncoin.fr/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "http://100.113.181.70/*",
+    "http://mac-mini-de-etienne.tail53fecb.ts.net/*",
+    "https://mac-mini-de-etienne.tail53fecb.ts.net/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
@@ -27,6 +30,20 @@
     {
       "matches": ["https://www.leboncoin.fr/*"],
       "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.facebook.com/marketplace/*"],
+      "js": ["fb-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.facebook.com/marketplace/*"],
+      "js": ["fb-content.js"],
       "run_at": "document_start",
       "world": "ISOLATED",
       "all_frames": false

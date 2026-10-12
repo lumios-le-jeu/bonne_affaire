@@ -42,13 +42,15 @@ export async function POST(req: NextRequest) {
       runId: body.runId,
       url: body.url,
       page: body.page,
+      source: body.source,
       total: body.total,
       ads: body.ads,
     })
-    console.log(
-      `\x1b[36m[Ingest]\x1b[0m page ${body.page ?? '?'} (${body.source ?? '?'}) — ` +
-      `${r.stored} annonces${r.reason ? ' — ' + r.reason : ''}`
-    )
+    const prefix =
+      body.source === 'facebook'
+        ? '\x1b[35m[Ingest]\x1b[0m marketplace (passif)'
+        : `\x1b[36m[Ingest]\x1b[0m page ${body.page ?? '?'}`
+    console.log(`${prefix} — ${r.stored} annonces${r.reason ? ' — ' + r.reason : ''}`)
     return NextResponse.json(r, { headers: cors })
   } catch (e: any) {
     console.error('\x1b[31m[Ingest]\x1b[0m', e)
